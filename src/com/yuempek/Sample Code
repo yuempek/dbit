@@ -1,0 +1,440 @@
+package com.yuempek.learning5;
+
+import java.util.ArrayList;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
+
+import com.yuempek.DBit.Column;
+import com.yuempek.DBit.ColumnType;
+import com.yuempek.DBit.DBCollection;
+import com.yuempek.DBit.Database;
+import com.yuempek.DBit.Row;
+import com.yuempek.DBit.Table;
+import com.yuempek.DBit.View;
+import com.yuempek.learning5.TestData;
+import com.yuempek.listit.ListitGlobal;
+import com.yuempek.listit.ListitItem;
+import com.yuempek.listit.ListitItemType;
+import com.yuempek.listit.ListitManager;
+import com.yuempek.listit.ListitNavigation;
+import com.yuempek.listit.ListitType;
+
+import android.app.Activity;
+import android.app.LauncherActivity.ListItem;
+import android.content.Intent;
+import android.database.Cursor;
+import android.os.Bundle;
+import android.provider.Settings.Global;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ListView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+public class MainActivity extends Activity implements OnItemClickListener {
+
+	private static String LISTSQL_LISTNAME = "listname";
+	private static String LISTSQL_ITEMNAME = "item_name";
+	
+	private DBCollection dbc;
+	private Database db;
+	private Table TABLE_list_groups;
+	private Table TABLE_list_items;
+	private Table TABLE_list_relations;
+	private Table TABLE_lists;
+	private View  VIEW_all_list_and_items;
+	private View  VIEW_all_relations;
+	
+	private ListitNavigation navigation;
+	
+	private ListitType listType;
+	
+	private ListitManager lm;
+	
+	public MainActivity(){
+		if(ListitGlobal.listitNavigation == null)
+			ListitGlobal.listitNavigation = new ListitNavigation();
+		
+		if(ListitGlobal.listTypeOfNewList == null)
+			ListitGlobal.listTypeOfNewList = ListitType.LIST_OF_LISTS;
+		
+		this.listType = ListitGlobal.listTypeOfNewList;
+		this.navigation = ListitGlobal.listitNavigation.clone(); 
+		
+        this.lm = new ListitManager();
+	}
+	
+	
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_main);
+
+		ListView list = (ListView) findViewById(R.id.listView1);
+		list.setOnItemClickListener(this);		
+
+		databaseDecleration();    
+		populate();
+	}
+	
+	public void databaseDecleration(){
+
+		
+		String view_sql_all_list_and_items = 
+				"select                                    "+"\n"+
+				"   l.listname ,                           "+"\n"+
+			    "   ifnull(li.item_name,'') item_name      "+"\n"+
+				"from                                      "+"\n"+
+				"   lists l left outer join                "+"\n"+
+				"   list_items li on (li.list_id = l.id)   "+"\n"+
+				"order by listname, item_name;  ";
+		
+		String view_sql_all_relations = 
+				"select lr.group_id group_id,                                 "+"\n"+
+				"       l.listname listname,                                  "+"\n"+
+				"	    li.item_name item_name                                "+"\n"+
+				"  from                                                       "+"\n"+
+				"	   list_groups lg inner join                              "+"\n"+
+				"	   list_relations lr on(lg.id = lr.group_id) inner join   "+"\n"+
+				"	   list_items li on(li.id = lr.related_obj_id) inner join "+"\n"+
+				"	   lists l on(li.list_id = l.id)                          "+"\n"+
+				" where (lr.related_obj_type = 1)                             "+"\n"+
+				" union all                                                   "+"\n"+
+				"select lr.group_id group_id,                                 "+"\n"+
+				"       l.listname listname,                                  "+"\n"+
+				"	   li.item_name item_name                                 "+"\n"+
+				"  from                                                       "+"\n"+
+				"	   list_groups lg inner join                              "+"\n"+
+				"	   list_relations lr on(lg.id = lr.group_id) inner join   "+"\n"+
+				"	   lists l on(lr.related_obj_id = l.id) inner join        "+"\n"+
+				"	   list_items li on(l.id = li.list_id)                    "+"\n"+
+				" where (lr.related_obj_type = 0)                             "+"\n"+
+				" union all													  "+"\n"+
+				"	    select 0 group_id,                                    "+"\n"+
+				"	           listname,                                      "+"\n"+
+				"	    	   item_name                                      "+"\n"+
+				"	      from all_list_and_items;                            "+"\n";
+		   
+		dbc = new DBCollection(this);
+		db = dbc.AddDatabase("listit");
+		TABLE_list_groups = db.AddTable("list_groups");
+		TABLE_list_groups.AddColumn("id", ColumnType.INTEGER, 11).useAsPK().useAsAutoIncremental();
+
+		TABLE_list_items = db.AddTable("list_items");
+		TABLE_list_items.AddColumn("id", ColumnType.INTEGER, 11).useAsPK().useAsAutoIncremental();
+		TABLE_list_items.AddColumn("item_name", ColumnType.STRING, 45);
+		TABLE_list_items.AddColumn("list_id", ColumnType.INTEGER, 11);
+			
+		TABLE_list_relations = db.AddTable("list_relations");
+		TABLE_list_relations.AddColumn("group_id", ColumnType.INTEGER, 11);
+		TABLE_list_relations.AddColumn("related_obj_id", ColumnType.INTEGER, 11);
+		TABLE_list_relations.AddColumn("related_obj_type", ColumnType.INTEGER, 11);
+
+		TABLE_lists = db.AddTable("lists");
+		TABLE_lists.AddColumn("id", ColumnType.INTEGER, 11).useAsPK().useAsAutoIncremental();
+		TABLE_lists.AddColumn("listname", ColumnType.STRING, 45);
+		
+		VIEW_all_list_and_items = db.AddView("all_list_and_items", view_sql_all_list_and_items);
+		VIEW_all_list_and_items.AddColumn("listname", ColumnType.STRING, 100);
+		VIEW_all_list_and_items.AddColumn("itemname", ColumnType.STRING, 100);
+			
+
+		VIEW_all_relations = db.AddView("all_relations", view_sql_all_relations);
+		VIEW_all_relations.AddColumn("group_id", ColumnType.INTEGER, 11);
+		VIEW_all_relations.AddColumn("listname", ColumnType.STRING, 100);
+		VIEW_all_relations.AddColumn("item_name", ColumnType.STRING, 100);
+		
+		db.open();
+	}
+
+	@SuppressWarnings("rawtypes")
+	public Row[] getSQL(String sql, ArrayList<Column> columns){
+		ArrayList<Row> records = new ArrayList<Row>();
+		String columnstr = "";
+
+		for(int i = 0; i < columns.size(); i++){
+			columnstr += columns.get(i).columnName + ( i + 1 == columns.size() ? "" : ", ");
+		}
+		
+		Cursor cur =  db.db.rawQuery( "select " + columnstr + " from (" + sql + ") a ", null );
+	    cur.moveToFirst();
+	    
+	    while(!cur.isAfterLast()){
+	    	Row r = new Row(null);
+			Iterator<Column> iter = columns.iterator();
+
+			while(iter.hasNext()){
+				Column column = iter.next().clone();
+				r.put(column.columnName, column);
+			}
+			
+	    	String cn;
+	    	Column c;
+	    	for(int i = 0; i < columns.size(); i++){
+	    		cn = columns.get(i).columnName;
+	    		try {
+					c = r.Column(cn);
+					c.setValueFromString(cur.getString(i));
+				} catch (Exception e) {
+					e.printStackTrace();
+				}	    		 
+			}
+	    	
+	    	records.add(r);
+	    	cur.moveToNext();
+	    }		
+		
+		return records.toArray(new Row[records.size()]);
+	}
+	
+	@SuppressWarnings("rawtypes")
+	private void populate(){
+		String sqlReturnedColumnName = MainActivity.LISTSQL_LISTNAME;
+		
+		switch (this.listType) {
+			case LIST_OF_ITEMS:
+				sqlReturnedColumnName = MainActivity.LISTSQL_ITEMNAME;
+				break;
+			case LIST_OF_LISTS:
+				sqlReturnedColumnName = MainActivity.LISTSQL_LISTNAME;
+				break;
+		}
+
+		String listSQL = 
+				 "select distinct "+ sqlReturnedColumnName +" from                           "+"\n"+
+				 "(                                                                          "+"\n"+
+				 "	select *                                                                 "+"\n"+
+				 "      from all_relations ar                                                "+"\n"+
+				 "	 where 1=1                                                               "+"\n";
+		
+		for(int i = 0 ; i < this.navigation.size(); i++){
+			ListitItem li = this.navigation.itemsList.get(i);
+			listSQL += 
+					"and group_id in                                                         "+"\n"+
+					"(                                                                       "+"\n"+
+					"	select group_id                                                      "+"\n"+
+					"	  from all_relations                                                 "+"\n"+
+					"	 where listname = '"+li.listName+"' and item_name = '"+li.itemName+"'"+"\n"+
+					"	   and group_id <> 0                                                 "+"\n"+
+					") 				                                                         "+"\n";
+		}		 
+		
+		listSQL +=
+				") s                                                                         "+"\n"+
+				 "where 1=1                                                                  "+"\n"+
+				 "  and listname||':#:'||item_name not in (''                                "+"\n";
+
+		for(int i = 0 ; i < this.navigation.size(); i++){
+			ListitItem li = this.navigation.itemsList.get(i);
+			listSQL += 
+					",'"+li.listName+":#:"+li.itemName+"'                                    "+"\n";
+		}		 
+
+		listSQL += ")                                                                        "+"\n";
+
+		if(ListitGlobal.listitNavigation.activeItem != null &&
+				ListitGlobal.listitNavigation.activeItem.itemType == ListitItemType.LIST)
+		{
+			ListitItem li = ListitGlobal.listitNavigation.activeItem;
+			listSQL += "and listname = '"+li.listName+"'                                     "+"\n";
+		}
+		listSQL += "order by 1";
+		
+		
+		ArrayList<Column> columns = new ArrayList<Column>();
+		Column newColumn = new Column<String>(sqlReturnedColumnName, 100, null);
+		newColumn.columnType = ColumnType.STRING;
+		columns.add(newColumn);
+		Row[] rows = getSQL(listSQL, columns); 
+
+	    ArrayList<String> items = new ArrayList<>();
+	    
+	    for (int i = 0; i < rows.length; i++) {
+				try {
+					items.add((String)rows[i].Column(sqlReturnedColumnName).value);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+		}
+	    
+		ArrayAdapter<String> adapter = new ArrayAdapter<>(this, R.layout.da_item, items);
+		
+		ListView list = (ListView) findViewById(R.id.listView1);
+		list.setAdapter(adapter);
+		
+	}
+	
+	@Override
+	public boolean onCreateOptionsMenu(Menu menu) {
+		// Inflate the menu; this adds items to the action bar if it is present.
+		getMenuInflater().inflate(R.menu.main, menu);
+		return true;
+	}
+
+	@Override
+	public boolean onOptionsItemSelected(MenuItem item) {
+		int id = item.getItemId();
+		if (id == R.id.action_settings) {
+			return true;
+		}
+		return super.onOptionsItemSelected(item);
+	}
+	
+	@SuppressWarnings("unchecked")
+	public void addList(android.view.View v){
+		
+		EditText text = (EditText)findViewById(R.id.textboxListname);
+		String s = text.getText().toString();
+		
+		if(s.isEmpty()) {
+			Toast.makeText(this, "Ýsim boþ olamaz!", Toast.LENGTH_LONG).show();			
+			return;
+		}
+		
+		Row r = TABLE_lists.newRow();
+	    try {
+	        r.Column("id").setValueAsNull();
+			r.Column("listname").value = s;
+	        r.insert();
+	    } catch (Exception e) {
+			Log.e(getPackageName(), e.getMessage());
+		}
+	    
+	    
+	    populate();
+		
+		text.setText("");
+	}
+	
+	
+	public void recreateDB(android.view.View v){
+		db.reCreateDatabase();
+		
+	    Row r; 
+	    r = TABLE_list_groups.newRow();
+	    try {
+	    	String[] d = TestData.list_groups;
+	    	for(int i=0; i < d.length; i++){
+		        r.Column("id").value = Integer.parseInt(d[i].split("\\|")[0]);
+		        r.insert();
+	        }
+	    } catch (Exception e) {
+			Log.e(getPackageName(), e.getMessage());
+		}
+
+	    r = TABLE_list_items.newRow();
+	    try {
+	    	String[] d = TestData.list_items;
+	    	for(int i=0; i < d.length; i++){
+		        r.Column("id").value = Integer.parseInt(d[i].split("\\|")[0]);
+				r.Column("item_name").value = d[i].split("\\|")[1];
+				r.Column("list_id").value = Integer.parseInt(d[i].split("\\|")[2]);
+		        r.insert();
+	        }
+	    } catch (Exception e) {
+			Log.e(getPackageName(), e.getMessage());
+		}
+
+	    r = TABLE_list_relations.newRow();
+	    try {
+	    	String[] d = TestData.list_relations;
+	    	for(int i=0; i < d.length; i++){
+	    		r.Column("group_id").value = Integer.parseInt(d[i].split("\\|")[0]);
+	    		r.Column("related_obj_id").value = Integer.parseInt(d[i].split("\\|")[1]);
+	    		r.Column("related_obj_type").value = Integer.parseInt(d[i].split("\\|")[2]);
+				r.insert();
+	        }
+	    } catch (Exception e) {
+			Log.e(getPackageName(), e.getMessage());
+		}
+
+	    r = TABLE_lists.newRow();
+	    try {
+	    	String[] d = TestData.lists;
+	    	for(int i=0; i < d.length; i++){
+		        r.Column("id").value = Integer.parseInt(d[i].split("\\|")[0]);
+				r.Column("listname").value = d[i].split("\\|")[1];
+		        r.insert();
+	        }
+	    } catch (Exception e) {
+			Log.e(getPackageName(), e.getMessage());
+		}
+
+		populate();
+	}
+	
+	
+	@Override
+	public void onBackPressed(){
+		if(!(this.navigation.size() == 0 && ListitGlobal.listitNavigation.activeItem == null))
+		{
+			//if(ListitGlobal.listitNavigation.activeItem.itemType == ListitItemType.ITEM)
+			//	ListitGlobal.listitNavigation.pop();
+
+			try
+			{
+				this.overridePendingTransition(R.anim.pull_in_left, R.anim.push_out_right);
+			}
+			catch (Exception e) { Toast.makeText(this, "An error occured " + e.toString(), Toast.LENGTH_LONG).show(); }
+		}
+		
+		super.onBackPressed();
+	}
+	
+	@Override
+	public void onDestroy(){
+		super.onDestroy();
+	}
+	
+	@Override
+	public void onItemClick(AdapterView<?> parent, android.view.View view, int position, long id) {
+
+		final TextView listLabel = (TextView) view.findViewById(R.id.textViewListItem);		
+	    EditText textbox = (EditText)findViewById(R.id.textboxListname);
+        textbox.setText(listLabel.getText());
+        
+        ListitItem item = null;
+        ListitType type = null;
+		        
+        switch (this.listType) {
+			case LIST_OF_LISTS:
+				item = new ListitItem(){
+					{
+						listName = listLabel.getText().toString();
+						itemType = ListitItemType.LIST;
+					}
+				};
+				type = ListitType.LIST_OF_ITEMS;				
+				break;
+	
+			case LIST_OF_ITEMS:
+				item = new ListitItem(){
+					{
+						listName = navigation.activeItem.listName;
+						itemName = listLabel.getText().toString();
+						itemType = ListitItemType.ITEM;
+					}
+				};
+				type = ListitType.LIST_OF_LISTS;
+				break;
+		}
+        
+		this.lm.createNewInstence(this, MainActivity.class, type, item, this.navigation);
+		
+		try
+		{
+			this.overridePendingTransition(R.anim.pull_in_right, R.anim.push_out_left);
+		}
+		catch (Exception e) { Toast.makeText(this, "An error occured " + e.toString(), Toast.LENGTH_LONG).show(); }
+		
+	}
+
+}
